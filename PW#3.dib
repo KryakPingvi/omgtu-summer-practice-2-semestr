@@ -32,6 +32,7 @@
 
 #!csharp
 
+using System.Threading;
 //
 // Вычисление определенного интеграла
 //
@@ -43,10 +44,34 @@ class DefiniteIntegral
     // step - размер одного шага разбиения
     // threadsNumber - число потоков, которые используются для вычислений
     //
+    public static double sum = 0.0;
+    public static void SolveFunc(double a, double b, Func<double, double> function,double step) {
+        double localsum = (function(a)+function(b))/2;
+        double n = (b-a)/step;
+        for (int i  = 1; i < n; i++){
+            localsum += function(a + i*step);
+        }
+        localsum *= step;
+        sum += localsum;
+    }
     public static double Solve(double a, double b, Func<double, double> function, double step, int threadsnumber)
     {
-        // отсюда надо начинать реализацию задачи
-        return 0.0;
+        sum =0.0;
+        double dn = (b-a)/threadsnumber;
+        Thread[] threads = new Thread[threadsnumber];
+        for (int i=0;i<threadsnumber;i++)
+        {
+            double start = a + i*dn;
+            if (i==threadsnumber-1) threads[i] = new Thread(() => SolveFunc(start, b, function, step));
+            else threads[i] = new Thread(() => SolveFunc(start, start+dn, function, step));
+            threads[i].Start();
+        }
+        foreach (Thread thread in threads)
+        {
+            thread.Join();
+        }
+
+        return sum;
     }
 }
 
@@ -63,4 +88,4 @@ Assert.Equal(0, DefiniteIntegral.Solve(-1, 1, X, 1e-4, 2), 1e-4);
 
 Assert.Equal(0, DefiniteIntegral.Solve(-1, 1, SIN, 1e-5, 8), 1e-4);
 
-Assert.Equal(10, DefiniteIntegral.Solve(0, 10, X, 1e-6, 8), 1e-5);
+Assert.Equal(50, DefiniteIntegral.Solve(0, 10, X, 1e-6, 8), 1e-5);
