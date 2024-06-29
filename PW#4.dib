@@ -32,7 +32,18 @@
 
 #!csharp
 
+// Install the ScottPlot NuGet package
+#r "nuget:ScottPlot, 5.0.*"
+
+// Setup a custom formatter to display plots as images
+using Microsoft.DotNet.Interactive.Formatting;
+Formatter.Register(typeof(ScottPlot.Plot), (p, w) => 
+    w.Write(((ScottPlot.Plot)p).GetImageHtml(400, 300)), HtmlFormatter.MimeType);
+
+#!csharp
+
 using System.Threading;
+using System.Diagnostics;
 //
 // Вычисление определенного интеграла
 //
@@ -56,6 +67,9 @@ class DefiniteIntegral
     }
     public static double Solve(double a, double b, Func<double, double> function, double step, int threadsnumber)
     {
+        Stopwatch stopWatch = new Stopwatch();
+        stopWatch.Start();
+
         sum =0.0;
         double dn = (b-a)/threadsnumber;
         Thread[] threads = new Thread[threadsnumber];
@@ -70,7 +84,6 @@ class DefiniteIntegral
         {
             thread.Join();
         }
-
         return sum;
     }
 }
@@ -89,3 +102,96 @@ Assert.Equal(0, DefiniteIntegral.Solve(-1, 1, X, 1e-4, 2), 1e-4);
 Assert.Equal(0, DefiniteIntegral.Solve(-1, 1, SIN, 1e-5, 8), 1e-4);
 
 Assert.Equal(50, DefiniteIntegral.Solve(0, 10, X, 1e-6, 8), 1e-5);
+
+#!csharp
+
+//определяю минимальный размер шага на несимметричном интервале
+var SIN = (double x) => Math.Sin(x);
+Assert.Equal(1-Math.Cos(10), DefiniteIntegral.Solve(0, 10, SIN, 1e-6, 1), 1e-4);
+
+Assert.Equal(1-Math.Cos(10), DefiniteIntegral.Solve(0, 10, SIN, 1e-5, 1), 1e-4);
+
+Assert.Equal(1-Math.Cos(10), DefiniteIntegral.Solve(0, 10, SIN, 1e-4, 1), 1e-4);
+
+Assert.Equal(1-Math.Cos(10), DefiniteIntegral.Solve(0, 10, SIN, 1e-3, 1), 1e-4);
+
+Assert.Equal(1-Math.Cos(10), DefiniteIntegral.Solve(0, 10, SIN, 1e-2, 1), 1e-4);
+
+//Assert.Equal(1-Math.Cos(10), DefiniteIntegral.Solve(0, 10, SIN, 1e-1, 1), 1e-4);
+//как видно, ошибка вышла только на тесте, в котором я брал шаг 1e-5, значит достаточная точность получается при размере шага 1e-2
+
+#!csharp
+
+public long Sred(int potoks)
+{
+    int kolvosred = 1000;
+    Stopwatch stopWatch = new Stopwatch();
+    long[] vars = new long[kolvosred];
+    
+    for (int i=0;i<kolvosred;i++)
+    {
+        stopWatch.Start();
+        double otvet = DefiniteIntegral.Solve(-100, 100, SIN, 1e-2, potoks);
+        stopWatch.Stop();
+        vars[i] = stopWatch.ElapsedTicks;
+        stopWatch.Reset();
+    }
+
+    return Convert.ToInt64(vars.Average());
+}
+
+int potoks = 16;
+
+long[] dataX = new long[potoks-1];
+for (int i=2;i<=potoks;i++)
+{
+    dataX[i-2]=Sred(i);
+}
+long[] dataY = Enumerable.Range(2, potoks-1).Select(Convert.ToInt64).ToArray();
+
+ScottPlot.Plot plt = new();
+plt.Add.Scatter(dataX, dataY);
+
+Console.WriteLine($"Наименьшее время достигается при {Array.IndexOf(dataX,dataX.Min())+2} потоках, количество тиков: {dataX.Min()}");
+
+plt
+
+#!csharp
+
+public static double SolveOne(double a, double b, Func<double, double> function,double step) 
+{
+    double localsum = (function(a)+function(b))/2;
+    double n = (b-a)/step;
+    for (int i  = 1; i < n; i++){
+        localsum += function(a + i*step);
+    }
+    localsum *= step;
+    return localsum;
+}
+
+long SredOne()
+{
+    int kolvosred = 1000;
+    Stopwatch stopWatch = new Stopwatch();
+    long[] vars = new long[kolvosred];
+    
+    for (int i=0;i<kolvosred;i++)
+    {
+        stopWatch.Start();
+        double otvet = SolveOne(-100, 100, SIN, 1e-2);
+        stopWatch.Stop();
+        vars[i] = stopWatch.ElapsedTicks;
+        stopWatch.Reset();
+    }
+
+    return Convert.ToInt64(vars.Average());
+}
+double result = ((double)Sred(2)/SredOne()*100)-100;
+Console.WriteLine($"Двупоточная программа быстрее однопоточной на: {result}%")
+
+#!markdown
+
+Summary
+В п. 4 я выбрал размер шага 1e-2, проверив все шаги от 1e-6 до 1e-1, так как при размере шаге 1e-2 вычисление интеграла остается достаточно точным. 
+В п. 5 я выбрал 2 потока, так как при построении графика чаще всего программа работает наименьшее время при двух потоках.
+Скорость многопоточной версии: 3898 тиков, Двупоточная программа быстрее однопоточной на 89.5%. При пересчёте разницы скорости двупоточная программа всегда быстрее однопоточной больше чем на 15%
