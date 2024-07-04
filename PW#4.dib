@@ -55,35 +55,38 @@ class DefiniteIntegral
     // step - размер одного шага разбиения
     // threadsNumber - число потоков, которые используются для вычислений
     //
-    public static double sum = 0.0;
-    public static void SolveFunc(double a, double b, Func<double, double> function,double step) {
-        double localsum = (function(a)+function(b))/2;
-        double n = (b-a)/step;
-        for (int i  = 1; i < n; i++){
-            localsum += function(a + i*step);
+    public static double SolveFunc(double a, double b, Func<double, double> function, double step)
+    {
+        double localsum = (function(a) + function(b)) / 2;
+        double n = (b - a) / step;
+        for (int i = 1; i < n; i++)
+        {
+            localsum += function(a + i * step);
         }
         localsum *= step;
-        sum += localsum;
+        return localsum;
     }
+
     public static double Solve(double a, double b, Func<double, double> function, double step, int threadsnumber)
     {
-        Stopwatch stopWatch = new Stopwatch();
-        stopWatch.Start();
+        double dn = (b - a) / threadsnumber;
+        double sum = 0.0;
+        object lockObject = new object();
 
-        sum =0.0;
-        double dn = (b-a)/threadsnumber;
-        Thread[] threads = new Thread[threadsnumber];
-        for (int i=0;i<threadsnumber;i++)
+        Parallel.For(0, threadsnumber, () => 0.0, (i, loopState, localsum) =>
         {
-            double start = a + i*dn;
-            if (i==threadsnumber-1) threads[i] = new Thread(() => SolveFunc(start, b, function, step));
-            else threads[i] = new Thread(() => SolveFunc(start, start+dn, function, step));
-            threads[i].Start();
-        }
-        foreach (Thread thread in threads)
+            double start = a + i * dn;
+            double end = (i == threadsnumber - 1) ? b : start + dn;
+            localsum += SolveFunc(start, end, function, step);
+            return localsum;
+        },
+        localsum =>
         {
-            thread.Join();
-        }
+            lock (lockObject)
+            {
+                sum += localsum;
+            }
+        });
         return sum;
     }
 }
@@ -186,12 +189,12 @@ long SredOne()
 
     return Convert.ToInt64(vars.Average());
 }
-double result = ((double)Sred(2)/SredOne()*100)-100;
+double result = ((double)SredOne()/Sred(14)*100)-100;
 Console.WriteLine($"Двупоточная программа быстрее однопоточной на: {result}%")
 
 #!markdown
 
 Summary
 В п. 4 я выбрал размер шага 1e-2, проверив все шаги от 1e-6 до 1e-1, так как при размере шаге 1e-2 вычисление интеграла остается достаточно точным. 
-В п. 5 я выбрал 2 потока, так как при построении графика чаще всего программа работает наименьшее время при двух потоках.
-Скорость многопоточной версии: 3898 тиков, Двупоточная программа быстрее однопоточной на 89.5%. При пересчёте разницы скорости двупоточная программа всегда быстрее однопоточной больше чем на 15%
+В п. 5 я выбрал 14 потоков, так как при таком количестве программа выполняется за наименьшее время.
+Скорость многопоточной версии: 817 тиков, Двупоточная программа быстрее однопоточной более чем на 100%, что удовлетворяет условию задачи.
