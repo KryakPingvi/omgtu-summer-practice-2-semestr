@@ -35,9 +35,13 @@
 
 #!csharp
 
+public interface ICommand
+{
+    void Execute();
+}
 public interface IScheduler
 {
-    bool HasCommand()
+    bool HasCommand();
     ICommand Select();
     void Add(ICommand cmd);
 }
@@ -55,3 +59,152 @@ public interface IScheduler
 Необходимо учесть этот момент при реализации очереди.
 
 2. Для обепечения справедливости стратегии планировщика в слабом смысле использовать стратегию Round Robbin (циклическую) для определения следующего потока на исполнение.
+
+#!csharp
+
+public class Scheduler : IScheduler
+{
+    BlockingCollection<ICommand> schQueue = [];
+
+    public bool HasCommand() 
+    {
+        return schQueue.Count>0;
+    }
+
+    public ICommand Select()
+    {
+        return schQueue.Take();
+    }
+
+    public void Add(ICommand cmd)
+    {
+        schQueue.Add(cmd);
+    }
+}
+
+#!csharp
+
+using System.Collections.Concurrent;
+using System.Threading;
+
+class ServerThread
+{
+    public BlockingCollection<ICommand> queue = [];
+    public Thread thread;
+    public bool SoftStopflag = false;
+    public Scheduler sched;
+
+    public ServerThread()
+    {
+        sched = new Scheduler();
+        thread = new Thread(RunServer);
+        thread.Start();
+    }
+
+    public void RunServer()
+    {
+        while (true)
+        {
+            if (!sched.HasCommand() && queue.Count==0 && SoftStopflag) 
+            {
+                break;
+            }
+            ICommand com;
+
+            if (sched.HasCommand())
+                com = sched.Select();
+            else if (!queue.TryTake(out com))
+            {
+                Thread.Sleep(10);
+                continue;
+            }
+            
+            try
+            {
+                com.Execute();
+            }
+            catch (ThreadInterruptedException)
+            {
+                break;
+            }
+        }
+    }
+
+    public void AddCommand(ICommand com)
+    {
+        queue.Add(com);
+    }
+}
+
+#!csharp
+
+class HardStopCommand(ServerThread serverThread) : ICommand
+{
+    ServerThread serverThread = serverThread;
+
+    public void Execute()
+    {
+        throw new ThreadInterruptedException();
+    }
+}
+
+class SoftStopCommand(ServerThread serverThread) : ICommand
+{
+    ServerThread serverThread = serverThread;
+
+    public void Execute()
+    {
+        serverThread.SoftStopflag = true;
+    }
+}
+
+class TestBaseCommand : ICommand
+{
+    public void Execute()
+    {
+        Console.WriteLine("Base test");
+    }
+}
+
+class TestLongCommand(ServerThread serverThread, int counter) : ICommand
+{
+    ServerThread serverThread = serverThread;
+    int counter = counter;
+
+    public void Execute()
+    {
+        if (counter == 0)
+            return;
+
+        Console.WriteLine($"{counter} command of long");
+        Thread.Sleep(500);
+
+        serverThread.sched.Add(this);
+        counter--;
+    }
+}
+
+#!csharp
+
+ServerThread server1 = new();
+Console.WriteLine("Server1:");
+
+server1.AddCommand(new TestCommand());
+server1.AddCommand(new TestLongCommand(server1, 3));
+server1.AddCommand(new TestCommand());
+server1.AddCommand(new SoftStopCommand(server1));
+server1.AddCommand(new TestCommand());
+
+server1.thread.Join();
+
+Console.WriteLine();
+Console.WriteLine("Server2:");
+ServerThread server2 = new();
+
+server2.AddCommand(new TestCommand());
+server2.AddCommand(new TestLongCommand(server2, 3));
+server2.AddCommand(new TestCommand());
+server2.AddCommand(new HardStopCommand(server2));
+server2.AddCommand(new TestCommand());
+
+server2.thread.Join();
