@@ -36,3 +36,204 @@
 1. [Паттерн Сообщение](https://www.enterpriseintegrationpatterns.com/patterns/messaging/Message.html)
 2. [Паттерн Роутер - весь раздел про Роутеры](https://www.enterpriseintegrationpatterns.com/patterns/messaging/MessageRoutingIntro.html)
 3. [Обмен сообщеними](https://www.enterpriseintegrationpatterns.com/patterns/messaging/MessageConstructionIntro.html)
+
+#!csharp
+
+interface ICommand
+{
+    void Execute();
+}
+
+interface IScheduler
+{
+    bool HasCommand();
+    ICommand Select();
+    void Add(ICommand cmd);
+}
+
+#!csharp
+
+using System.Collections.Concurrent;
+using System.Threading;
+
+class ServerThread
+{
+    public BlockingCollection<ICommand> queue = [];
+    public Thread thread;
+    public bool SoftStopflag = false;
+    public Scheduler sched;
+
+    public ServerThread(Scheduler sched)
+    {
+        this.sched = sched;
+        thread = new Thread(RunServer);
+        thread.Start();
+    }
+
+    public void RunServer()
+    {
+        while (true)
+        {
+            if (!sched.HasCommand() && queue.Count==0 && SoftStopflag) 
+            {
+                break;
+            }
+            ICommand com;
+
+            if (sched.HasCommand()) com = sched.Select();
+
+            else if (!queue.TryTake(out com))
+            {
+                Thread.Sleep(10);
+                continue;
+            }
+
+            try
+            {
+                com.Execute();
+            }
+            catch (ThreadInterruptedException)
+            {
+                break;
+            }
+        }
+    }
+
+    public void AddCommand(ICommand com)
+    {
+        queue.Add(com);
+    }
+}
+
+class RouterCommand : ICommand
+{
+    ConcurrentDictionary<int, BlockingCollection<string>> commandQueue = new ConcurrentDictionary<int, BlockingCollection<string>>();
+    BlockingCollection<(int, string)> routerQueue = new BlockingCollection<(int, string)>();
+
+    public void AddQueue(int id, BlockingCollection<string> queue)
+    {
+        commandQueue.TryAdd(id, queue);
+    }
+
+    public void RemoveQueue(int id)
+    {
+        commandQueue.TryRemove(id, out _);
+    }
+
+    public void Send(int id, string message)
+    {
+        routerQueue.Add((id, message));
+    }
+
+    public void Execute()
+    {
+        while (routerQueue.TryTake(out var item))
+        {
+            int id = item.Item1;
+            string message = item.Item2;
+
+            if (commandQueue.TryGetValue(id, out var queue))
+            {
+                queue.Add(message);
+                Console.WriteLine($"Сообщение адресату {id} было отправлено: {message}");
+            }
+            else
+            {
+                Console.WriteLine($"Сообщение адресату {id} не было отправлено, его не существует: {message}");
+            }
+        }
+    }
+}
+
+public class TestCommand(int id) : ICommand
+{
+    int counter = 0;
+
+    public void Execute()
+    {
+        Console.WriteLine($"Поток {id} вызов {++counter}");
+    }
+}
+
+class Scheduler : IScheduler
+{
+    BlockingCollection<ICommand> schQueue = [];
+
+    public bool HasCommand() 
+    {
+        return schQueue.Count>0;
+    }
+
+    public ICommand Select()
+    {
+        return schQueue.Take();
+    }
+
+    public void Add(ICommand cmd)
+    {
+        schQueue.Add(cmd);
+    }
+}
+
+class HardStopCommand(ServerThread serverThread) : ICommand
+{
+    ServerThread serverThread = serverThread;
+
+    public void Execute()
+    {
+        throw new ThreadInterruptedException();
+    }
+}
+
+class SoftStopCommand(ServerThread serverThread) : ICommand
+{
+    ServerThread serverThread = serverThread;
+
+    public void Execute()
+    {
+        serverThread.SoftStopflag = true;
+    }
+}
+
+class TestBaseCommand : ICommand
+{
+    public void Execute()
+    {
+        Console.WriteLine("Base test");
+    }
+}
+
+class TestLongCommand(ICommand command, Scheduler scheduler, int counter) : ICommand
+{
+    int counter = counter;
+    Scheduler scheduler = scheduler;
+
+    public void Execute()
+    {
+        if (counter!=0)
+        {
+            command.Execute();
+            counter--;
+            if (counter!=0) scheduler.Add(this);
+        }
+    }
+}
+
+Scheduler scheduler = new Scheduler();
+ServerThread serverThread = new ServerThread(scheduler);
+
+RouterCommand router = new RouterCommand();
+BlockingCollection<string> commandQueue1 = new BlockingCollection<string>();
+BlockingCollection<string> commandQueue2 = new BlockingCollection<string>();
+
+router.AddQueue(1, commandQueue1);
+router.AddQueue(2, commandQueue2);
+
+serverThread.AddCommand(router);
+serverThread.AddCommand(new TestLongCommand(new TestCommand(1), scheduler, 5));
+serverThread.AddCommand(new TestLongCommand(new TestCommand(2), scheduler, 5));
+
+router.Send(1, "Сообщение для команды 1");
+router.Send(2, "Сообщение для команды 2");
+router.Send(3, "Сообщение для команды 3, которой нет");
+serverThread.AddCommand(new SoftStopCommand(serverThread));
