@@ -37,10 +37,200 @@
 Для этого следует использовать условные события, которые позволят убедиться, что оба потока запустились и готовы читать и писать объекты и только потом запускать таймер.
 2. Для итогового вывода сравнивать усредненные значения.
 
-#!markdown
+#!csharp
+
+// Install the ScottPlot NuGet package
+#r "nuget:ScottPlot, 5.0.*"
+
+// Setup a custom formatter to display plots as images
+using Microsoft.DotNet.Interactive.Formatting;
+Formatter.Register(typeof(ScottPlot.Plot), (p, w) => 
+    w.Write(((ScottPlot.Plot)p).GetImageHtml(400, 300)), HtmlFormatter.MimeType);
+
+#!csharp
 
 // здесь писать код
+using System.Collections.Concurrent;
+using System.Threading;
+using System.Diagnostics;
+
+Stopwatch stopWatchIn = new Stopwatch();
+Stopwatch stopWatchOut = new Stopwatch();
+List<long> ticksIn = new List<long>();
+List<long> ticksOut = new List<long>();
+
+
+void In(BlockingCollection<int> blockqueue,ManualResetEventSlim ready,ManualResetEventSlim start)
+{
+    ready.Set();
+    start.Wait();
+    stopWatchIn.Start();
+    for (int i=0;i<1000000;i++)
+    {
+        blockqueue.Add(i);
+    }
+    blockqueue.CompleteAdding();
+    stopWatchIn.Stop();
+}
+void Out(BlockingCollection<int> blockqueue,ManualResetEventSlim ready,ManualResetEventSlim start)
+{
+    ready.Set();
+    start.Wait();
+    stopWatchOut.Start();
+    while (!blockqueue.IsCompleted)
+    {
+        int result;
+        blockqueue.TryTake(out result);
+    }
+    stopWatchOut.Stop();
+}
+
+
+
+for (int i=0;i<10;i++)
+{
+    BlockingCollection<int> blockqueue = new BlockingCollection<int>(1000000);
+
+    ManualResetEventSlim ready = new ManualResetEventSlim(false);
+    ManualResetEventSlim start = new ManualResetEventSlim(false);
+
+    Thread threadIn = new Thread(() => In(blockqueue,ready,start));
+    Thread threadOut = new Thread(() => Out(blockqueue,ready,start));
+
+    int kolvosred = 10;
+    long[] vars = new long[kolvosred];
+    threadIn.Start();
+    threadOut.Start();
+    ready.Wait();
+    start.Set();
+    threadIn.Join();
+    threadOut.Join();
+    ticksIn.Add(stopWatchIn.ElapsedTicks);
+    ticksOut.Add(stopWatchOut.ElapsedTicks);
+    stopWatchIn.Reset();
+    stopWatchOut.Reset();
+}
+var plt = new ScottPlot.Plot();
+var sig1 = plt.Add.Signal(ticksIn);
+sig1.LegendText = "In";
+plt.ShowLegend();
+long AverageBlockingCollectionIn= (long)ticksIn.Average();
+Console.WriteLine($"График времени добавления элементов BlockingCollection. Среднее значение: {AverageBlockingCollectionIn}");
+plt
+
+#!csharp
+
+var plt = new ScottPlot.Plot();
+var sig2 = plt.Add.Signal(ticksOut);
+sig2.LegendText = "Out";
+long AverageBlockingCollectionOut= (long)ticksOut.Average();
+Console.WriteLine($"График времени просмотра и исключения элементов BlockingCollection. Среднее значение: {AverageBlockingCollectionOut}");
+plt
+
+#!csharp
+
+List<long> ticksIn = new List<long>();
+List<long> ticksOut = new List<long>();
+
+async Task In(ConcurrentQueue<int> queue, TaskCompletionSource<bool> startSource, Stopwatch stopWatchIn)
+{
+    await Task.Yield();
+    await startSource.Task;
+    stopWatchIn.Start();
+    for (int i = 0; i < 1000000; i++)
+    {
+        queue.Enqueue(i);
+    }
+    stopWatchIn.Stop();
+}
+
+async Task Out(ConcurrentQueue<int> queue, TaskCompletionSource<bool> startSource, Stopwatch stopWatchOut)
+{
+    await Task.Yield();
+    await startSource.Task;
+    stopWatchOut.Start();
+    int result;
+    for (int i = 0; i < 1000000; i++)
+    {
+        queue.TryDequeue(out result);
+    }
+    stopWatchOut.Stop();
+}
+
+for (int i = 0; i < 10; i++)
+{
+    ConcurrentQueue<int> queue = new ConcurrentQueue<int>();
+    TaskCompletionSource<bool> startSource = new TaskCompletionSource<bool>();
+    Stopwatch stopWatchIn = new Stopwatch();
+    Stopwatch stopWatchOut = new Stopwatch();
+
+    Task inTask = In(queue, startSource, stopWatchIn);
+    Task outTask = Out(queue, startSource, stopWatchOut);
+
+    startSource.SetResult(true);
+
+    await Task.WhenAll(inTask, outTask);
+
+    ticksIn.Add(stopWatchIn.ElapsedTicks);
+    ticksOut.Add(stopWatchOut.ElapsedTicks);
+}
+var plt = new ScottPlot.Plot();
+var sig1 = plt.Add.Signal(ticksIn);
+sig1.LegendText = "In";
+plt.ShowLegend();
+long AverageConcurrentQueueIn= (long)ticksIn.Average();
+Console.WriteLine($"График времени добавления элементов ConcurrentQueue. Среднее значение: {AverageConcurrentQueueIn}");
+plt
+
+#!csharp
+
+var plt = new ScottPlot.Plot();
+var sig2 = plt.Add.Signal(ticksOut);
+sig2.LegendText = "Out";
+long AverageConcurrentQueueOut= (long)ticksOut.Average();
+Console.WriteLine($"График времени просмотра и исключения элементов BlockingCollection. Среднее значение: {AverageConcurrentQueueOut}");
+plt
+
+#!csharp
+
+List<long> ticksIn = new List<long>();
+List<long> ticksOut = new List<long>();
+
+Queue<int> queue = new Queue<int>();
+
+Stopwatch stopWatchIn = new Stopwatch();
+Stopwatch stopWatchOut = new Stopwatch();
+for (int j =0;j<10;j++)
+{
+    stopWatchIn.Start();
+    for (int i = 0; i < 1000000; i++) queue.Enqueue(i);
+    stopWatchIn.Stop();
+    ticksIn.Add(stopWatchIn.ElapsedTicks);
+
+    stopWatchOut.Start();
+    for (int i = 0; i < 1000000; i++) queue.Dequeue();
+    stopWatchOut.Stop();
+    ticksOut.Add(stopWatchOut.ElapsedTicks);
+}
+var plt = new ScottPlot.Plot();
+var sig1 = plt.Add.Signal(ticksIn);
+sig1.LegendText = "In";
+plt.ShowLegend();
+long AverageQueueIn= (long)ticksIn.Average();
+Console.WriteLine($"График времени добавления элементов ConcurrentQueue. Среднее значение: {AverageQueueIn}");
+plt
+
+#!csharp
+
+var plt = new ScottPlot.Plot();
+var sig2 = plt.Add.Signal(ticksOut);
+sig2.LegendText = "Out";
+long AverageQueueOut= (long)ticksOut.Average();
+Console.WriteLine($"График времени добавления элементов Queue. Среднее значение: {AverageQueueOut}");
+plt
 
 #!markdown
 
 ## Вывод
+Записать в ноутбуке вывод - какая и потоко-безопасных коллекций эффективнее. И выразить в процентах - скорость самой быстрой поток-безопасной коллекции по сравнению с обычной очредью.
+Из потоко-безопасных коллекций самой эффективной является ConcurrentQueue. На запись она быстрее обычной очереди на 187%, на чтение на 30%
