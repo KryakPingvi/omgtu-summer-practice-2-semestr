@@ -38,3 +38,95 @@ ServerThread может менять свое поведение для обра
 Отсутствие Команд в очереди потока не должно требовать значительных затрат процессорного времени. Значительными считаются затраты, которые зависят от времени простоя потока.
 
 Написать проверку, которая гарантирует правильное выполнение команд HardStop и SoftStop.
+
+#!csharp
+
+using System.Collections.Concurrent;
+using System.Threading;
+
+class ServerThread
+{
+    public BlockingCollection<ICommand> queue = [];
+    public Thread thread;
+    public bool SoftStopflag = false;
+    public ServerThread()
+    {
+        thread = new Thread(RunServer);
+        thread.Start();
+    }
+    public void RunServer()
+    {
+        while (true)
+        {
+            if (queue.Count==0 && SoftStopflag) 
+            {
+                break;
+            }
+            ICommand com = queue.Take();
+            try
+            {
+                com.Execute();
+            }
+            catch (ThreadInterruptedException)
+            {
+                break;
+            }
+        }
+    }
+    public void AddCommand(ICommand com)
+    {
+        queue.Add(com);
+    }
+}
+
+#!csharp
+
+class HardStopCommand(ServerThread serverThread) : ICommand
+{
+    ServerThread serverThread = serverThread;
+
+    public void Execute()
+    {
+        throw new ThreadInterruptedException();
+    }
+}
+
+class SoftStopCommand(ServerThread serverThread) : ICommand
+{
+    ServerThread serverThread = serverThread;
+
+    public void Execute()
+    {
+        serverThread.SoftStopflag = true;
+    }
+}
+class TestCommand : ICommand
+{
+    public void Execute()
+    {
+        Console.WriteLine("Test");
+    }
+}
+
+#!csharp
+
+Console.WriteLine("Сервер 1:");
+ServerThread server1 = new();
+
+server1.AddCommand(new TestCommand());
+server1.AddCommand(new TestCommand());
+server1.AddCommand(new SoftStopCommand(server1));
+server1.AddCommand(new TestCommand());
+
+server1.thread.Join();
+
+Console.WriteLine("Сервер 2:");
+
+ServerThread server2 = new();
+
+server2.AddCommand(new TestCommand());
+server2.AddCommand(new TestCommand());
+server2.AddCommand(new HardStopCommand(server2));
+server2.AddCommand(new TestCommand());
+
+server2.thread.Join();
